@@ -9,7 +9,7 @@ class DeepKalmanFilter:
         self.n_time_steps = n_time_steps
         self.batch_num = batch_num
 
-        self.lr = 1e-4
+        self.lr = 1e-3
         
         self.build_model()
 
@@ -54,10 +54,12 @@ class DeepKalmanFilter:
         self.input_states = tf.placeholder(tf.float32, shape=(self.batch_num, self.n_time_steps, self.n_dim_state))
         
         forward = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True)
+        forward_2 = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True)
         backward = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True, go_backwards = True)
+        backward_2 = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True, go_backwards = True)
 
-        h_forward = tf.unstack(forward(self.input_obs), axis=1)
-        h_backward = tf.unstack(backward(self.input_obs), axis=1)
+        h_forward = tf.unstack(forward_2(forward(self.input_obs)), axis=1)
+        h_backward = tf.unstack(backward_2(backward(self.input_obs)), axis=1)
         
         self.infer_state_means = []
         self.infer_state_logvars = []
