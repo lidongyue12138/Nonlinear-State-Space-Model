@@ -3,8 +3,9 @@ import numpy as np
 
 class DeepKalmanFilter:
 
-    def __init__(self, n_dim_state, n_dim_obs, n_time_steps, batch_num = 32):
+    def __init__(self, n_dim_state, n_dim_action, n_dim_obs, n_time_steps, batch_num = 32):
         self.n_dim_state = n_dim_state 
+        self.n_dim_action = n_dim_action
         self.n_dim_obs = n_dim_obs
         self.n_time_steps = n_time_steps
         self.batch_num = batch_num
@@ -12,17 +13,54 @@ class DeepKalmanFilter:
         self.lr = 1e-3
         
         self.build_model()
+        self._predict_model()
 
-    def train_model(self, batch_observations):
-        feed_dict = {self.input_obs: batch_observations}
+    def train_model(self, batch_observations, batch_actions):
+        feed_dict = {self.input_obs: batch_observations, self.input_actions: batch_actions}
         self.sess.run(self.train_step, feed_dict = feed_dict)
 
-    def test_model(self, batch_states, batch_observations):
+    def predict_model(self, batch_init_obs, batch_actions):
+        '''
+        Input:
+            (batch_num, n_dim_obs)
+            (batch_num, n_time_steps n_dim_actions)
+        '''
+        feed_dict = {self.init_obs: batch_init_obs, self.input_actions: batch_actions}
+        obs_pred = self.sess.run(self.predict_obs, feed_dict = feed_dict)
+        return obs_pred
+
+    def test_model(self, batch_states, batch_observations, batch_actions):
         '''
         Test Inference 
         '''
-        RMSE, ELBO = self.sess.run([self.RMSE, self.ELBO], feed_dict = {self.input_obs: batch_observations, self.input_states: batch_states})
+        RMSE, ELBO = self.sess.run([self.RMSE, self.ELBO], feed_dict = 
+            {self.input_obs: batch_observations, self.input_states: batch_states, self.input_actions: batch_actions}
+        )
         return RMSE, ELBO
+
+    def _predict_model(self):
+        self.init_obs = tf.placeholder(tf.float32, shape = [self.batch_num, self.n_dim_obs])
+        
+        input_actions = tf.unstack(self.input_actions, axis = 1)
+        init_obs = tf.expand_dims(self.init_obs, axis = 1)
+
+        h_forward = tf.unstack(self.forward(init_obs), axis=1)
+        h_backward = tf.unstack(self.backward(init_obs), axis=1)
+        
+        current_state = tf.zeros(shape=(self.batch_num, self.n_dim_state))
+        tmp_h_f = h_backward[0]
+        tmp_h_b = h_backward[0]
+        
+        init_state_mean, init_state_logvar = self.combiner(current_state, tmp_h_f, tmp_h_b)
+        
+        predict_obs = [] 
+        tmp_mean = init_state_mean
+        for i in range(self.n_time_steps - 1):
+            tmp_mean, tmp_logvar = self.transition(tmp_mean, input_actions[i])
+            tmp_obs_mean, tmp_obs_logvar = self.emission(tmp_mean)
+            predict_obs.append(tmp_obs_mean)
+        
+        self.predict_obs = tf.stack(predict_obs, axis = 1)
 
     def build_model(self):
         # input_state = tf.placeholder(tf.float32, shape=(None, self.n_dim_state))
@@ -50,16 +88,18 @@ class DeepKalmanFilter:
         Inference Network
         '''
         self.input_obs = tf.placeholder(tf.float32, shape=(self.batch_num, self.n_time_steps, self.n_dim_obs))
+        self.input_actions = tf.placeholder(tf.float32, shape=(self.batch_num, self.n_time_steps - 1, self.n_dim_action))
+        input_actions = tf.unstack(self.input_actions, axis = 1)
         # input hidden states for testing
         self.input_states = tf.placeholder(tf.float32, shape=(self.batch_num, self.n_time_steps, self.n_dim_state))
         
-        forward = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True)
-        forward_2 = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True)
-        backward = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True, go_backwards = True)
-        backward_2 = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True, go_backwards = True)
+        self.forward = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True)
+        # self.forward_2 = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True)
+        self.backward = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True, go_backwards = True)
+        # self.backward_2 = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True, go_backwards = True)
 
-        h_forward = tf.unstack(forward_2(forward(self.input_obs)), axis=1)
-        h_backward = tf.unstack(backward_2(backward(self.input_obs)), axis=1)
+        h_forward = tf.unstack(self.forward(self.input_obs), axis=1)
+        h_backward = tf.unstack(self.backward(self.input_obs), axis=1)
         
         self.infer_state_means = []
         self.infer_state_logvars = []
@@ -71,10 +111,10 @@ class DeepKalmanFilter:
             tmp_h_b = h_backward[i]
             
             tmp_state_mean, tmp_state_logvar = self.combiner(current_state, tmp_h_f, tmp_h_b)
-            current_state = self.reparameterize(tmp_state_mean, tmp_state_logvar)
+            current_state = tmp_state_mean
+            tmp_sample_states = self.reparameterize(tmp_state_mean, tmp_state_logvar)
             
-            self.infer_states.append(current_state)
-
+            self.infer_states.append(tmp_sample_states)
             self.infer_state_means.append(tmp_state_mean) 
             self.infer_state_logvars.append(tmp_state_logvar)
 
@@ -84,12 +124,12 @@ class DeepKalmanFilter:
         infer_obses = tf.unstack(self.input_obs, axis=1)
         P_X_Z = 0
         for i in range(self.n_time_steps):
-            tmp_mean, tmp_logvar = self.emission(self.infer_states[i])
+            tmp_mean, tmp_logvar = self.emission(self.infer_state_means[i])
             P_X_Z += self.log_normal_pdf(infer_obses[i], tmp_mean, tmp_logvar)
         
         KLD = self.log_normal_pdf(self.infer_states[0], 0., 0.) - self.log_normal_pdf(self.infer_states[0], self.infer_state_means[0], self.infer_state_logvars[0])
         for i in range(self.n_time_steps-1):
-            tmp_mean, tmp_logvar = self.transition(self.infer_states[i])
+            tmp_mean, tmp_logvar = self.transition(self.infer_state_means[i], input_actions[i])
             KLD += self.log_normal_pdf(self.infer_states[i+1], tmp_mean, tmp_logvar)
             KLD -= self.log_normal_pdf(self.infer_states[i+1], self.infer_state_means[i+1], self.infer_state_logvars[i+1])
 
@@ -129,23 +169,24 @@ class DeepKalmanFilter:
             mean_obs, logvar_obs = tf.split(current, num_or_size_splits=2, axis=1)
         return mean_obs, logvar_obs
 
-    def transition(self, state_pre):
+    def transition(self, state_pre, action):
         '''
-        Input: (None, n_dim_state)
+        Input: (None, n_dim_state), (None, n_dim_action)
         Output:
             state_t+1_mean: (None, n_dim_state)
             state_t+1_logvar: (None, n_dim_state)
         We implement a gated transtion function here
         '''
         # Gating Unit
+        tran_input = tf.concat([state_pre, action], axis = 1)
         with tf.variable_scope("Gating_Unit_Layer_1", reuse = tf.AUTO_REUSE):
-            current = self.fc_layer(state_pre, self.n_dim_state, 128)
+            current = self.fc_layer(tran_input, self.n_dim_state + self.n_dim_action, 128)
         with tf.variable_scope("Gating_Unit_Layer_2", reuse = tf.AUTO_REUSE):
             gate = self.fc_layer(current, 128, self.n_dim_state, activation = "sigmoid")
 
         # Proposed Mean
         with tf.variable_scope("Proposed_Mean_Layer_1", reuse = tf.AUTO_REUSE):
-            current = self.fc_layer(state_pre, self.n_dim_state, 128)
+            current = self.fc_layer(tran_input, self.n_dim_state + self.n_dim_action, 128)
         with tf.variable_scope("Proposed_Mean_Layer_2", reuse = tf.AUTO_REUSE):
             mean_h = self.fc_layer(current, 128, self.n_dim_state, activation = "I")
 
@@ -218,4 +259,7 @@ class DeepKalmanFilter:
     #         feed_dict = {mean: input_mean, logvar: input_logvar})
     
 if __name__ == "__main__":
-    model = DeepKalmanFilter(10, 20, 5)
+    model = DeepKalmanFilter(3, 4, 5, 10)
+    # init = tf.placeholder(tf.float32, shape=(32, 1, 3))
+    # forward = tf.keras.layers.SimpleRNN(units = 64, return_sequences = True)
+    # print(forward(init))

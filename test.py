@@ -26,26 +26,27 @@ if __name__ == "__main__":
     obs_count = state_count = 0
     data_obs, data_states, transition_mat = simulateLinearData(10000, 10, 3)
 
-    DKF = DeepKalmanFilter(3, 3, 10)
+    DKF = DeepKalmanFilter(3, 3, 3, 10)
 
-    for i in range(2000):
+    for i in range(20000):
         batch_obs, obs_count= get_next_batch(data_obs, obs_count)
         batch_state, state_count = get_next_batch(data_states, state_count)
+        batch_actions = np.zeros(shape = (32, 9, 3))
 
-        DKF.train_model(batch_obs)
+        DKF.train_model(batch_obs, batch_actions)
 
         if i%20 == 0:
-            RMSE, ELBO = DKF.test_model(batch_state, batch_obs)
+            RMSE, ELBO = DKF.test_model(batch_state, batch_obs, batch_actions)
             print("At iteration %d: ELBO\t%f RMSE\t%f" %(i, ELBO, RMSE))
 
-    # KF lower bound
-    observation_covariance = 4 * np.eye(3)
-    KF = KalmanFilter(
-        transition_matrices = transition_mat,
-        observation_covariance = observation_covariance
-    )
-    RMSE = []
-    for i in range(1000):
-        smoothed_state = KF.smooth(data_obs[i])[0]
-        rmse = np.mean(np.sqrt(np.square(smoothed_state - data_states[i])))
-        RMSE.append(rmse)
+    # # KF lower bound
+    # observation_covariance = 4 * np.eye(3)
+    # KF = KalmanFilter(
+    #     transition_matrices = transition_mat,
+    #     observation_covariance = observation_covariance
+    # )
+    # RMSE = []
+    # for i in range(1000):
+    #     smoothed_state = KF.smooth(data_obs[i])[0]
+    #     rmse = np.mean(np.sqrt(np.square(smoothed_state - data_states[i])))
+    #     RMSE.append(rmse)
