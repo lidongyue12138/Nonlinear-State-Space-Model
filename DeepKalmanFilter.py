@@ -101,8 +101,8 @@ class DeepKalmanFilter:
         '''
         Define testing RMSE
         '''
-        infer_states = tf.stack(self.infer_states)
-        infer_states = tf.reshape(infer_states, shape = [self.batch_num, self.n_time_steps, self.n_dim_state])
+        infer_states = tf.stack(self.infer_states, axis = 1)
+        # infer_states = tf.reshape(infer_states, shape = [self.batch_num, self.n_time_steps, self.n_dim_state])
         self.RMSE = tf.reduce_mean(tf.math.sqrt(tf.square(self.input_states - infer_states)))
         
         self.sess = tf.Session()

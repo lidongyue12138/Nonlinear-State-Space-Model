@@ -38,7 +38,7 @@ if __name__ == "__main__":
             RMSE, ELBO = DKF.test_model(batch_state, batch_obs)
             print("At iteration %d: ELBO\t%f RMSE\t%f" %(i, ELBO, RMSE))
 
-    
+    # KF lower bound
     observation_covariance = 4 * np.eye(3)
     KF = KalmanFilter(
         transition_matrices = transition_mat,
